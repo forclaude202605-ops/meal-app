@@ -1,0 +1,3 @@
+#!/bin/sh
+# コミット前チェック(個人データがステージされていないか)。設定手順は README を参照。
+exec node scripts/check-private.mjs

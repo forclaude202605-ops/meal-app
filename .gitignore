@@ -1,0 +1,19 @@
+# --- 個人データ(絶対にコミットしない。CLAUDE.md の「個人データの絶対ルール」) ---
+private/
+*.seed.json
+*backup*.json
+# 念のため: private/ の外に置かれた個人メモも拾う
+*-private.md
+
+# --- 仕様書(実データの断片を含むため、手元にのみ置く) ---
+meal-app-prompt.md
+
+# --- ビルド・依存・取得物 ---
+node_modules/
+dist/
+coverage/
+# 成分表の公式 Excel など、取得したファイルの置き場(再取得できる)
+.cache/
+
+# --- ローカル専用の設定 ---
+.claude/settings.local.json
