@@ -17,3 +17,4 @@ coverage/
 
 # --- ローカル専用の設定 ---
 .claude/settings.local.json
+.claude/launch.json

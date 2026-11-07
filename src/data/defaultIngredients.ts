@@ -9,6 +9,8 @@ import type { Ingredient, UnitConversion } from '../core/types.ts';
 export const VOLUME_ML = { 大さじ: 15, 小さじ: 5, 合: 180 } as const;
 export const DENSITY_SOURCE =
   '日本食品標準成分表（八訂）増補2023年 本表 備考欄の「100 mL：○ g」(https://www.mext.go.jp/a_menu/syokuhinseibun/mext_00001.html)';
+/** 大さじ 15 mL・小さじ 5 mL の出典(農林水産省 中国四国農政局の資料) */
+export const VOLUME_SOURCE = '大さじ15ml・小さじ5ml: 農林水産省 中国四国農政局の資料(https://www.maff.go.jp/chushi/syokuiku/katudou/attach/pdf/oyakudati-18.pdf)';
 
 interface DefaultSpec {
   id: string;
@@ -76,7 +78,7 @@ export function defaultIngredients(foods: FoodTable): Ingredient[] {
     if (!food) throw new Error(`初期値の食品 ${s.foodId} が成分表にありません`);
     const derived = food.gPer100mL !== null ? volumeUnits(food.gPer100mL, s.volumes) : [];
     const units = [...(s.confirmed ?? []), ...derived];
-    const memo = [s.note, derived.length > 0 ? `換算の出典: ${DENSITY_SOURCE}。大さじ=15 mL、小さじ=5 mL として計算` : ''].filter(Boolean).join(' / ');
+    const memo = [s.note, derived.length > 0 ? `換算の出典: ${DENSITY_SOURCE}。${VOLUME_SOURCE}` : ''].filter(Boolean).join(' / ');
     return {
       id: s.id,
       name: s.name,
