@@ -1,12 +1,9 @@
-// 食材マスタの編集(仕様書 §8「食材」)。成分表の紐づけ、ラベル値、レシピ、単位換算、価格。
+// 食材マスタの編集(仕様書 §8「食材」)。成分表の紐づけ、ラベル値、レシピ、単位換算。価格はテキストから作るので、ここでは見るだけ。
 import { useMemo, useState } from 'preact/hooks';
 import { foodDisplayName, KEY_INDEX, NUTRIENTS } from '../core/nutrients.ts';
-import { isSuspiciousPriceUnit } from '../core/price.ts';
-import { parsePriceText } from '../core/priceText.ts';
 import { normalizeUnit, parseQuantity } from '../core/quantity.ts';
 import { normalizeName, searchFoods, searchIngredients } from '../core/search.ts';
-import { todayLocal } from '../core/dates.ts';
-import { NUTRIENT_KEYS, SLOT_NAMES, type Ingredient, type NutrientKey, type PriceEntry, type RecipeComponent, type UnitConversion } from '../core/types.ts';
+import { NUTRIENT_KEYS, type Ingredient, type NutrientKey, type RecipeComponent, type UnitConversion } from '../core/types.ts';
 import { DENSITY_SOURCE, VOLUME_ML, VOLUME_SOURCE, volumeUnits } from '../data/defaultIngredients.ts';
 import { fmtNutrient } from './format.ts';
 import { newId, useAppState, useStore } from './store.ts';
@@ -57,9 +54,9 @@ export function IngredientEditor(props: { initial?: Ingredient; presetName?: str
   const usedRows = useMemo(() => {
     if (!id) return 0;
     let n = 0;
-    for (const d of data.days) for (const s of SLOT_NAMES) for (const dish of d.slots[s] ?? []) n += dish.rows.filter((r) => r.ingredientId === id).length;
+    for (const m of store.journal().meals) for (const l of m.lines) n += (l.items ?? []).filter((it) => it.ingredientId === id || it.same?.ingredientId === id).length;
     return n;
-  }, [data.days, id]);
+  }, [data, id]);
 
   if (picking === 'food') {
     return (
@@ -343,103 +340,34 @@ export function IngredientEditor(props: { initial?: Ingredient; presetName?: str
         </Field>
       </div>
 
-      {init ? <PriceSection ingredient={init} /> : <p class="small muted">価格は、保存したあとに登録できます。</p>}
+      {init ? <PriceSection ingredient={init} /> : null}
     </Sheet>
   );
 }
 
 function PriceSection(props: { ingredient: Ingredient }) {
   const store = useStore();
-  const { data } = useAppState();
-  const list = data.prices.filter((p) => p.ingredientId === props.ingredient.id).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.createdAt < b.createdAt ? 1 : -1));
+  useAppState();
+  const list = store
+    .journal()
+    .prices.filter((p) => p.ingredientId === props.ingredient.id)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.createdAt < b.createdAt ? 1 : -1));
   return (
     <div class="card">
-      <h3>価格</h3>
+      <h3>価格(テキストから)</h3>
       {props.ingredient.costFree ? <p class="small muted">「費用に含めない」食材です。</p> : null}
+      <p class="small muted">食材費のメモと、献立の中の単価メモから作っています。直すときは、記録の画面でその日のテキストを書き換えてください。</p>
       <ul class="list">
         {list.map((p) => (
-          <li class="row-flex small">
-            <span class="grow num">
-              {p.date} {p.store ?? ''} {p.qty}
-              {p.unit}
-              {p.grams ? `(${p.grams}g)` : ''} {p.yen}円 {p.source === 'inline' ? <Badge tone="info">単価メモ</Badge> : null}
-              {p.note ? <span class="muted"> ・{p.note}</span> : null}
-            </span>
-            <Button kind="ghost" class="small" aria-label="この価格を削除" onClick={() => confirm('この価格を削除しますか?') && store.deletePrice(p.id)}>
-              削除
-            </Button>
+          <li class="small num">
+            {p.date} {p.store ?? ''} {p.qty}
+            {p.unit}
+            {p.grams ? `(${p.grams}g)` : ''} {p.yen}円 {p.source === 'inline' ? <Badge tone="info">単価メモ</Badge> : <Badge tone="info">食材費</Badge>}
+            {p.note ? <span class="muted"> ・{p.note}</span> : null}
           </li>
         ))}
+        {list.length === 0 ? <li class="small muted">まだありません</li> : null}
       </ul>
-      <PriceForm ingredient={props.ingredient} />
-    </div>
-  );
-}
-
-/** 価格の登録。「420g 118円」「118円 420g」「4本 158円」「612g 6尾 538円」のどれでも受け付ける(例は架空) */
-export function PriceForm(props: { ingredient: Ingredient; onDone?: () => void }) {
-  const store = useStore();
-  const [date, setDate] = useState(todayLocal());
-  const [store_, setStore] = useState('');
-  const [text, setText] = useState('');
-  const [note, setNote] = useState('');
-  const [err, setErr] = useState<string | null>(null);
-  const parsed = text.trim() ? parsePriceText(text) : null;
-  const add = () => {
-    if (!parsed || !parsed.ok) {
-      setErr(parsed && !parsed.ok ? parsed.error : '量と金額を入れてください');
-      return;
-    }
-    const v = parsed.value;
-    if (isSuspiciousPriceUnit(v, props.ingredient) && !confirm('単位が mg になっています。mL か g の入力ミスではありませんか?このまま登録しますか?')) return;
-    const p: PriceEntry = {
-      id: newId('price'),
-      date,
-      ingredientId: props.ingredient.id,
-      yen: v.yen,
-      qty: v.qty,
-      unit: v.unit,
-      ...(v.grams !== undefined ? { grams: v.grams } : {}),
-      ...(store_.trim() ? { store: store_.trim() } : {}),
-      ...(note.trim() ? { note: note.trim() } : {}),
-      source: 'purchase',
-      createdAt: new Date().toISOString(),
-    };
-    store.upsertPrice(p);
-    setText('');
-    setNote('');
-    setErr(null);
-    props.onDone?.();
-  };
-  return (
-    <div style={{ marginTop: '8px' }}>
-      <div class="row-flex wrap">
-        <input class="input" type="date" aria-label="購入日" value={date} onChange={(e) => setDate(e.currentTarget.value)} style={{ width: 'auto' }} />
-        <input class="input grow" aria-label="店名" placeholder="店名" value={store_} onInput={(e) => setStore(e.currentTarget.value)} />
-      </div>
-      <Field label="量と金額" hint="例: 420g 118円 / 118円 420g / 4本 158円 / 612g 6尾 538円">
-        <input class="input" value={text} onInput={(e) => setText(e.currentTarget.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
-      </Field>
-      {parsed ? (
-        parsed.ok ? (
-          <p class="small muted">
-            → {parsed.value.qty}
-            {parsed.value.unit}
-            {parsed.value.grams !== undefined ? `(${parsed.value.grams}g)` : ''} で {parsed.value.yen}円
-          </p>
-        ) : (
-          <p class="small" style={{ color: 'var(--bad-text)' }}>
-            {parsed.error}
-          </p>
-        )
-      ) : null}
-      <Field label="補足(例: サンプルメモ)">
-        <input class="input" value={note} onInput={(e) => setNote(e.currentTarget.value)} />
-      </Field>
-      {err ? <div class="banner bad">{err}</div> : null}
-      <Button kind="primary" onClick={add}>
-        価格を登録
-      </Button>
     </div>
   );
 }

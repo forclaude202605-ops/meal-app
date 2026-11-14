@@ -75,3 +75,10 @@ const LABELS: [keyof IssueCounts, string, boolean][] = [
 export function warningChips(c: IssueCounts): WarningChip[] {
   return LABELS.filter(([k]) => c[k] > 0).map(([key, label, excluded]) => ({ key, label, count: c[key], excluded }));
 }
+
+/** 数量と単位の表示。大さじ・小さじ・カップは単位を前に(小さじ0.5)、ほかは後ろに(2錠) */
+export function fmtAmount(q: number | null, unit: string): string {
+  if (q === null) return unit ? `${unit}(数字なし)` : '(数量なし)';
+  const s = fmtQty(q);
+  return ['大さじ', '小さじ', 'カップ'].includes(unit) ? `${unit}${s}` : `${s}${unit}`;
+}

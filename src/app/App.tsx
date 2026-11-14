@@ -1,6 +1,5 @@
 // 画面の骨組み: 下部のタブ(記録 / 集計 / 食材 / 設定)、更新の案内、通知。
 import { useEffect, useState } from 'preact/hooks';
-import { todayLocal } from '../core/dates.ts';
 import { IngredientsView } from './IngredientsView.tsx';
 import { isStandalone } from './pwa.ts';
 import { RecordView } from './RecordView.tsx';
@@ -20,7 +19,6 @@ const LABELS: Record<Tab, string> = { record: '記録', summary: '集計', ingre
 
 export function App(props: { registerUpdate: (cb: (apply: () => void) => void) => void }) {
   const [tab, setTab] = useState<Tab>('record');
-  const [date, setDate] = useState(todayLocal());
   const [update, setUpdate] = useState<(() => void) | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [standalone, setStandalone] = useState(isStandalone());
@@ -52,8 +50,8 @@ export function App(props: { registerUpdate: (cb: (apply: () => void) => void) =
             </Button>
           </div>
         ) : null}
-        {tab === 'record' ? <RecordView date={date} setDate={setDate} goSettings={() => setTab('settings')} isStandalone={standalone} /> : null}
-        {tab === 'summary' ? <SummaryView date={date} /> : null}
+        {tab === 'record' ? <RecordView goSettings={() => setTab('settings')} isStandalone={standalone} /> : null}
+        {tab === 'summary' ? <SummaryView /> : null}
         {tab === 'ingredients' ? <IngredientsView /> : null}
         {tab === 'settings' ? <SettingsView isStandalone={standalone} /> : null}
       </main>

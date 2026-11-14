@@ -101,6 +101,59 @@ export interface Day {
   memo?: string;
 }
 
+// ---------- 記録の正: 日ごとのテキスト(schema 2) ----------
+// 区分・料理・行の構造は保存しない。テキストから毎回読み取って Day を作る(栄養と費用を保存しないのと同じ考え方)。
+
+/** テキストの種類: 献立(食事メモ) / 食材費(購入記録) */
+export type NoteKind = 'meal' | 'purchase';
+
+export interface DayText {
+  /** `${kind}:${date}` */
+  id: string;
+  kind: NoteKind;
+  /** YYYY-MM-DD(献立は食事の日、食材費は購入日) */
+  date: string;
+  /** その日のテキスト(日付の行は含めない) */
+  text: string;
+  /** 最後に保存した時刻(ISO) */
+  updatedAt: string;
+}
+
+export const textId = (kind: NoteKind, date: string): string => `${kind}:${date}`;
+
+/** 毎回聞く項目への答え(その日のその行の補足) */
+export type AnswerValue =
+  /** 数量のない行・数字のない単位・少々など */
+  | { type: 'qty'; qty: number; unit: string }
+  /** 区分の見出しより前の行の区分 */
+  | { type: 'slot'; slot: SlotName }
+  /** 食材ではない行: 料理名として扱う / 読み飛ばす */
+  | { type: 'as'; as: 'title' | 'skip' }
+  /** 購入記録の単位の直し(mg → mL など) */
+  | { type: 'unit'; unit: string };
+
+/** どの行への答えか。同じ日の同じ行が複数あっても、何番目かで区別する */
+export interface AnswerTarget {
+  kind: NoteKind;
+  date: string;
+  /** `${区分}|${正規化した行}` */
+  lineKey: string;
+  /** 同じ lineKey の何番目か(0始まり) */
+  occurrence: number;
+  /** 行の中の何番目の名前か(0始まり) */
+  item: number;
+}
+
+export interface LineAnswer extends AnswerTarget {
+  id: string;
+  value: AnswerValue;
+  /** 答えたときの食材(「前回の値」を出すため。計算には使わない) */
+  ingredientId?: string;
+  answeredAt: string;
+}
+
+export const answerId = (t: AnswerTarget): string => `${t.kind}|${t.date}|${t.lineKey}|${t.occurrence}|${t.item}`;
+
 /** プロフィール。どの項目も、持ち主が設定画面で選ぶまで空(既定値を入れない) */
 export interface Profile {
   sex?: 'male' | 'female';

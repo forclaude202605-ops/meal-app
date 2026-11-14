@@ -1,12 +1,14 @@
 // アプリの状態。データはすべて端末内(IndexedDB)にあり、起動時にメモリへ読み込む。
-// 入力のたびにメモリを更新し、IndexedDB にも保存する(保存ボタンはない)。
+// 記録の正は「日ごとのテキスト」。区分・料理・行、価格、栄養、費用は保存せず、テキストから毎回作る(journal)。
 import { createContext } from 'preact';
 import { useContext, useEffect, useState } from 'preact/hooks';
 import type { FoodTable } from '../core/nutrients.ts';
-import type { Day, Ingredient, PriceEntry, Settings } from '../core/types.ts';
-import { isEmptyDay, mergeByDate, type AppData } from '../data/backup.ts';
+import { buildJournal, type Journal } from '../core/parse/journal.ts';
+import { answerId, textId, type AnswerTarget, type AnswerValue, type DayText, type Ingredient, type LineAnswer, type NoteKind, type Settings } from '../core/types.ts';
+import { mergeByDate, type AppData } from '../data/backup.ts';
 import { defaultIngredients } from '../data/defaultIngredients.ts';
-import { demoData } from '../data/demo.ts';
+import { DEMO_PREFIX, DEMO_RANGE, demoIngredients, demoMealText, demoPurchaseText } from '../data/demo.ts';
+import { analyzePaste, pastedTexts } from '../core/parse/paste.ts';
 import type { MealDb, Meta } from '../db/db.ts';
 
 export interface AppState {
@@ -18,11 +20,21 @@ export interface AppState {
 
 type Listener = () => void;
 
+/** その日のテキストに今ある行の、答えの鍵(lineKey|occurrence)。消えた行の答えを片づけるため */
+export function liveAnswerKeys(foods: FoodTable, ingredients: Ingredient[], t: DayText): Set<string> {
+  const j = buildJournal({ foods, ingredients, texts: [t], answers: [] });
+  const lines = t.kind === 'meal' ? (j.meals[0]?.lines ?? []) : (j.purchases[0]?.lines ?? []);
+  const keys = new Set(lines.map((l) => `${l.target.lineKey}|${l.target.occurrence}`));
+  keys.add('__slot__|0');
+  return keys;
+}
+
 export class Store {
   readonly db: MealDb;
   readonly foods: FoodTable;
   private state: AppState;
   private listeners = new Set<Listener>();
+  private journalCache: { data: AppData; journal: Journal } | null = null;
 
   constructor(db: MealDb, foods: FoodTable, initial: { data: AppData; meta: Meta }) {
     this.db = db;
@@ -57,37 +69,78 @@ export class Store {
     }
   }
 
-  /** 初回起動: 調味料などの初期値を入れる */
+  /** 保存済みのテキストから作った記録(データが変わるまで使い回す) */
+  journal(): Journal {
+    const data = this.state.data;
+    if (this.journalCache?.data !== data) {
+      this.journalCache = { data, journal: buildJournal({ foods: this.foods, ingredients: data.ingredients, texts: data.texts, answers: data.answers }) };
+    }
+    return this.journalCache.journal;
+  }
+
+  /** 初回起動: 調味料などの初期値を入れる。schema 2 への切り替え(旧形式のデモの食材を消す)も1回だけ行う */
   async initializeIfNeeded(): Promise<void> {
-    if (this.state.meta.initialized) return;
-    const existing = new Set(this.state.data.ingredients.map((i) => i.id));
-    const add = defaultIngredients(this.foods).filter((i) => !existing.has(i.id));
-    for (const i of add) await this.db.putIngredient(i);
-    const meta = { ...this.state.meta, initialized: true, foodDbVersionId: this.foods.version };
-    await this.db.putMeta(meta);
-    this.set({ data: { ...this.state.data, ingredients: [...this.state.data.ingredients, ...add] }, meta });
+    let meta = this.state.meta;
+    let ingredients = this.state.data.ingredients;
+    if (!meta.textsMigrated) {
+      const remove = ingredients.filter((i) => i.id.startsWith(DEMO_PREFIX)).map((i) => i.id);
+      if (remove.length > 0) await this.db.writeIngredients([], remove);
+      ingredients = ingredients.filter((i) => !remove.includes(i.id));
+      meta = { ...meta, textsMigrated: true, demo: false };
+    }
+    if (!meta.initialized) {
+      const existing = new Set(ingredients.map((i) => i.id));
+      const add = defaultIngredients(this.foods).filter((i) => !existing.has(i.id));
+      if (add.length > 0) await this.db.writeIngredients(add, []);
+      ingredients = [...ingredients, ...add];
+      meta = { ...meta, initialized: true, foodDbVersionId: this.foods.version };
+    }
+    if (meta !== this.state.meta) {
+      await this.db.putMeta(meta);
+      this.set({ data: { ...this.state.data, ingredients }, meta });
+    }
   }
 
-  // ---- 日 ----
-  getDay(date: string): Day {
-    return this.state.data.days.find((d) => d.date === date) ?? { date, slots: {}, extras: [] };
+  // ---- 日ごとのテキスト ----
+
+  getText(kind: NoteKind, date: string): DayText | undefined {
+    return this.state.data.texts.find((t) => t.id === textId(kind, date));
   }
 
-  setDay(input: Day) {
-    // 行も料理名もない料理と、空の食事区分は残さない
-    const day: Day = { ...input, slots: {} };
-    for (const [slot, dishes] of Object.entries(input.slots) as [keyof Day['slots'], Day['slots'][keyof Day['slots']]][]) {
-      const kept = (dishes ?? []).filter((d) => d.rows.length > 0 || d.title);
-      if (kept.length > 0) day.slots[slot] = kept;
+  /**
+   * テキストを保存する(同じ日・同じ種類は置き換え)。保存した日の答えのうち、もうない行への答えは片づける
+   * (同じ行が残っていれば、答えは引き継ぐ)。
+   */
+  saveTexts(list: DayText[]) {
+    if (list.length === 0) return;
+    const ids = new Set(list.map((t) => t.id));
+    const texts = [...this.state.data.texts.filter((t) => !ids.has(t.id)), ...list];
+    const removeAnswers: string[] = [];
+    for (const t of list) {
+      const live = liveAnswerKeys(this.foods, this.state.data.ingredients, t);
+      for (const a of this.state.data.answers) if (a.kind === t.kind && a.date === t.date && !live.has(`${a.lineKey}|${a.occurrence}`)) removeAnswers.push(a.id);
     }
-    const others = this.state.data.days.filter((d) => d.date !== day.date);
-    if (isEmptyDay(day)) {
-      this.setData({ days: others });
-      void this.persist(this.db.deleteDay(day.date));
-    } else {
-      this.setData({ days: [...others, day] });
-      void this.persist(this.db.putDay(day));
-    }
+    const gone = new Set(removeAnswers);
+    this.setData({ texts, answers: this.state.data.answers.filter((a) => !gone.has(a.id)) });
+    void this.persist(this.db.writeTexts(list, [], removeAnswers));
+  }
+
+  deleteText(kind: NoteKind, date: string) {
+    const id = textId(kind, date);
+    const removeAnswers = this.state.data.answers.filter((a) => a.kind === kind && a.date === date).map((a) => a.id);
+    const gone = new Set(removeAnswers);
+    this.setData({ texts: this.state.data.texts.filter((t) => t.id !== id), answers: this.state.data.answers.filter((a) => !gone.has(a.id)) });
+    void this.persist(this.db.writeTexts([], [id], removeAnswers));
+  }
+
+  // ---- 答え(毎回聞く項目) ----
+
+  setAnswer(target: AnswerTarget, value: AnswerValue, ingredientId?: string) {
+    const a: LineAnswer = { ...target, id: answerId(target), value, ...(ingredientId ? { ingredientId } : {}), answeredAt: new Date().toISOString() };
+    const list = this.state.data.answers;
+    const idx = list.findIndex((x) => x.id === a.id);
+    this.setData({ answers: idx >= 0 ? list.map((x) => (x.id === a.id ? a : x)) : [...list, a] });
+    void this.persist(this.db.putAnswer(a));
   }
 
   // ---- 食材 ----
@@ -103,17 +156,19 @@ export class Store {
     void this.persist(this.db.deleteIngredient(id));
   }
 
-  // ---- 価格 ----
-  upsertPrice(p: PriceEntry) {
-    const list = this.state.data.prices;
-    const idx = list.findIndex((x) => x.id === p.id);
-    this.setData({ prices: idx >= 0 ? list.map((x) => (x.id === p.id ? p : x)) : [...list, p] });
-    void this.persist(this.db.putPrice(p));
+  /** 食材に別名を足す(一度答えれば覚える: 食材名の割り当て) */
+  addAlias(ingredientId: string, alias: string) {
+    const ing = this.state.data.ingredients.find((i) => i.id === ingredientId);
+    if (!ing || ing.name === alias || ing.aliases.includes(alias)) return;
+    this.upsertIngredient({ ...ing, aliases: [...ing.aliases, alias] });
   }
 
-  deletePrice(id: string) {
-    this.setData({ prices: this.state.data.prices.filter((x) => x.id !== id) });
-    void this.persist(this.db.deletePrice(id));
+  /** 食材に単位の重さを足す(一度答えれば覚える: 1パック = 何g など) */
+  addUnit(ingredientId: string, unit: string, grams: number) {
+    const ing = this.state.data.ingredients.find((i) => i.id === ingredientId);
+    if (!ing) return;
+    const units = [...ing.units.filter((u) => u.unit !== unit), { unit, qty: 1, grams, basis: 'manual' as const }];
+    this.upsertIngredient({ ...ing, units });
   }
 
   // ---- 設定・メタ ----
@@ -140,14 +195,39 @@ export class Store {
     await this.replaceAll(mergeByDate(this.state.data, incoming), reason);
   }
 
-  /** 全データ消去(初期値の調味料などは入れ直す) */
+  /** 全データ消去(初期値の調味料などは入れ直す。設定は残す) */
   async clearAll(): Promise<void> {
-    const empty: AppData = { ingredients: defaultIngredients(this.foods), prices: [], days: [], settings: this.state.data.settings };
+    const empty: AppData = { ingredients: defaultIngredients(this.foods), texts: [], answers: [], settings: this.state.data.settings };
     await this.replaceAll(empty, '全データ消去の前', { demo: false, initialized: true, foodDbVersionId: this.foods.version });
   }
 
-  async loadDemo(): Promise<void> {
-    await this.replaceAll(demoData(this.foods), 'デモデータを読み込む前', { demo: true, initialized: true, foodDbVersionId: this.foods.version });
+  /** デモ用の食材を食材マスタに足す(すでにあるものは足さない) */
+  addDemoIngredients(): number {
+    const have = new Set(this.state.data.ingredients.map((i) => i.id));
+    const add = demoIngredients().filter((i) => !have.has(i.id));
+    if (add.length === 0) return 0;
+    this.setData({ ingredients: [...this.state.data.ingredients, ...add] });
+    this.setMeta({ demo: true });
+    void this.persist(this.db.writeIngredients(add, []));
+    return add.length;
+  }
+
+  /** デモを消す: デモの食材と、デモのテキストと同じ内容の日(とその答え) */
+  async removeDemo(today: string): Promise<{ ingredients: number; texts: number }> {
+    const data = this.state.data;
+    const a = analyzePaste(`${demoPurchaseText()}\n${demoMealText()}`, { today, saved: [] });
+    const demoTexts = new Map(pastedTexts(a, {}, '').map((t) => [t.id, t.text]));
+    const removeTexts = data.texts.filter((t) => t.date >= DEMO_RANGE.start && t.date <= DEMO_RANGE.end && demoTexts.get(t.id) === t.text).map((t) => t.id);
+    const removeIngs = data.ingredients.filter((i) => i.id.startsWith(DEMO_PREFIX)).map((i) => i.id);
+    const goneTexts = new Set(removeTexts);
+    const next: AppData = {
+      ...data,
+      ingredients: data.ingredients.filter((i) => !removeIngs.includes(i.id)),
+      texts: data.texts.filter((t) => !goneTexts.has(t.id)),
+      answers: data.answers.filter((x) => !goneTexts.has(textId(x.kind, x.date))),
+    };
+    await this.replaceAll(next, 'デモを消す前', { demo: false });
+    return { ingredients: removeIngs.length, texts: removeTexts.length };
   }
 }
 

@@ -1,28 +1,38 @@
-// 集計の画面(本格的な集計・グラフ・食事摂取基準との比較は M3)。M2 では、選んだ週の日ごとの合計だけを表で出す。
-import { useMemo } from 'preact/hooks';
-import { computeDay, computePeriod, createContext } from '../core/calc.ts';
-import { eachDate, weekRange } from '../core/dates.ts';
+// 集計の画面(本格的な集計・グラフ・食事摂取基準との比較は M3)。いまは、週ごとに日の合計を表で出す。
+// 日の値は、保存したテキストから毎回計算したもの。
+import { useMemo, useState } from 'preact/hooks';
+import { computePeriod } from '../core/calc.ts';
+import { addDays, eachDate, todayLocal, weekRange } from '../core/dates.ts';
 import { fmtDateJa, fmtNutrient, fmtYen } from './format.ts';
 import { useAppState, useStore } from './store.ts';
+import { Button } from './ui.tsx';
 
-export function SummaryView(props: { date: string }) {
+export function SummaryView() {
   const store = useStore();
   const { data } = useAppState();
-  const range = weekRange(props.date, data.settings.weekStartsOn);
-  const ctx = useMemo(() => createContext(store.foods, data.ingredients, data.prices), [store.foods, data.ingredients, data.prices]);
-  const days = useMemo(
-    () => data.days.filter((d) => d.date >= range.start && d.date <= range.end).map((d) => computeDay(ctx, d)),
-    [ctx, data.days, range.start, range.end],
-  );
+  const journal = store.journal();
+  const latest = journal.meals[journal.meals.length - 1]?.date;
+  const [date, setDate] = useState(latest ?? todayLocal());
+  const range = weekRange(date, data.settings.weekStartsOn);
+  const days = useMemo(() => journal.meals.filter((m) => m.date >= range.start && m.date <= range.end).map((m) => m.calc), [journal, range.start, range.end]);
   const p = computePeriod(days, range, data.settings.averageMode);
   const byDate = new Map(days.map((d) => [d.date, d]));
   return (
     <div>
       <div class="topbar" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12px)', paddingBottom: '12px' }}>
         <h1 style={{ fontSize: '1.1rem' }}>集計(週)</h1>
-        <p class="small muted">
-          {fmtDateJa(range.start)} 〜 {fmtDateJa(range.end)}。記録画面で選んだ日の週です。グラフや月の集計、食事摂取基準との比較は次の段階(M3)で入ります。
-        </p>
+        <div class="row-flex">
+          <Button kind="ghost" aria-label="前の週" onClick={() => setDate(addDays(date, -7))}>
+            ‹
+          </Button>
+          <span class="grow" style={{ textAlign: 'center' }}>
+            {fmtDateJa(range.start, true)} 〜 {fmtDateJa(range.end)}
+          </span>
+          <Button kind="ghost" aria-label="次の週" onClick={() => setDate(addDays(date, 7))}>
+            ›
+          </Button>
+        </div>
+        <p class="small muted">グラフや月の集計、食事摂取基準との比較は次の段階(M3)で入ります。</p>
       </div>
       <div class="card">
         <table class="tbl">

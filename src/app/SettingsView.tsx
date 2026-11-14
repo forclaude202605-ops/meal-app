@@ -1,5 +1,7 @@
-// 設定の画面: プロフィール、週の開始、平均の分母、バックアップ、保存の永続化、全データ消去、デモデータ、出典、ホーム画面への追加の案内。
+// 設定の画面: プロフィール、週の開始、平均の分母、バックアップ、保存の永続化、全データ消去、デモを消す、出典、ホーム画面への追加の案内。
 import { useEffect, useState } from 'preact/hooks';
+import { todayLocal } from '../core/dates.ts';
+import { DEMO_PREFIX } from '../data/demo.ts';
 import type { Profile, Settings } from '../core/types.ts';
 import { parseBackup, summarize, type BackupFile, type DataSummary } from '../data/backup.ts';
 import type { Snapshot } from '../db/db.ts';
@@ -15,14 +17,18 @@ function SummaryList(props: { s: DataSummary }) {
   const s = props.s;
   return (
     <dl class="kv">
-      <dt>日数</dt>
-      <dd>{s.days} 日(食材 {s.rows} 行、体重 {s.weights} 日)</dd>
+      <dt>献立</dt>
+      <dd>{s.mealDays} 日</dd>
+      <dt>食材費</dt>
+      <dd>{s.purchaseDays} 日</dd>
+      <dt>テキスト</dt>
+      <dd>{s.lines} 行(献立と食材費の合計。空行を除く)</dd>
       <dt>日付の範囲</dt>
       <dd>{s.firstDate ? `${s.firstDate} 〜 ${s.lastDate}` : 'なし'}</dd>
+      <dt>補足(答え)</dt>
+      <dd>{s.answers} 件</dd>
       <dt>食材</dt>
       <dd>{s.ingredients} 件</dd>
-      <dt>価格</dt>
-      <dd>{s.prices} 件</dd>
     </dl>
   );
 }
@@ -33,7 +39,7 @@ export function SettingsView(props: { isStandalone: boolean }) {
   const settings = data.settings;
   const [persist, setPersist] = useState<PersistState | null>(null);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [importing, setImporting] = useState<{ backup: BackupFile; migratedFrom: number | null } | null>(null);
+  const [importing, setImporting] = useState<{ backup: BackupFile; migratedFrom: number | null; dropped: { days: number; prices: number } | null } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -165,7 +171,7 @@ export function SettingsView(props: { isStandalone: boolean }) {
                 const r = parseBackup(await f.text());
                 if (r.ok) {
                   setImportError(null);
-                  setImporting({ backup: r.backup, migratedFrom: r.migratedFrom });
+                  setImporting({ backup: r.backup, migratedFrom: r.migratedFrom, dropped: r.dropped });
                 } else setImportError(r.error);
               }}
             />
@@ -174,12 +180,12 @@ export function SettingsView(props: { isStandalone: boolean }) {
         <p class="small muted">「書き出す」で共有シートが開きます。「ファイルに保存」から iCloud Drive などに保存してください。</p>
         {importError ? <div class="banner bad">読み込めません: {importError}</div> : null}
         <h3 style={{ marginTop: '12px' }}>自動退避(直近3世代)</h3>
-        <p class="small muted">読み込み・全データ消去・デモの読み込みの前に、その時点の状態をこの端末に自動で残します。</p>
+        <p class="small muted">読み込み・全データ消去・デモを消す前に、その時点の状態をこの端末に自動で残します。</p>
         <ul class="list">
           {snapshots.map((s) => (
             <li class="row-flex small">
               <span class="grow">
-                {fmtDateTime(s.createdAt)} ・ {s.reason} ・ {s.summary.days}日分
+                {fmtDateTime(s.createdAt)} ・ {s.reason} ・ 献立 {s.summary.mealDays ?? 0}日分
               </span>
               <Button
                 kind="ghost"
@@ -223,21 +229,21 @@ export function SettingsView(props: { isStandalone: boolean }) {
       </section>
 
       <section class="card">
-        <h2>デモデータと全データ消去</h2>
-        <p class="small muted">デモデータは 2025年1月の架空の2週間分です。動作を確かめたら「全データ消去」で消して、実データを入れてください。</p>
+        <h2>デモと全データ消去</h2>
+        <p class="small muted">デモは 2025年1月の架空のテキストです(記録の画面の「デモを貼り付ける」)。動作を確かめたら「デモを消す」で消して、実データを貼ってください。</p>
         <div class="row-flex wrap">
           <Button
-            disabled={busy}
+            disabled={busy || !(meta.demo || data.ingredients.some((i) => i.id.startsWith(DEMO_PREFIX)))}
             onClick={async () => {
-              if (current.days > 0 && !meta.demo && !confirm('今のデータをデモデータで置き換えます(今の状態は自動で退避します)。よろしいですか?')) return;
+              if (!confirm('デモ用の食材と、デモのテキストと同じ内容の日を消します(今の状態は自動で退避します)。よろしいですか?')) return;
               setBusy(true);
-              await store.loadDemo();
+              const r = await store.removeDemo(todayLocal());
               reloadSnapshots();
               setBusy(false);
-              toast('デモデータを読み込みました');
+              toast(`デモを消しました(食材 ${r.ingredients} 件、テキスト ${r.texts} 日分)`);
             }}
           >
-            デモデータを読み込む
+            デモを消す
           </Button>
           <Button kind="danger" disabled={busy} onClick={() => setClearing(true)}>
             全データ消去
@@ -271,6 +277,7 @@ export function SettingsView(props: { isStandalone: boolean }) {
         <ImportSheet
           backup={importing.backup}
           migratedFrom={importing.migratedFrom}
+          dropped={importing.dropped}
           currentFoodDb={store.foods.versionInfo.id}
           onClose={() => setImporting(null)}
           onDone={() => {
@@ -295,7 +302,7 @@ export function SettingsView(props: { isStandalone: boolean }) {
   );
 }
 
-function ImportSheet(props: { backup: BackupFile; migratedFrom: number | null; currentFoodDb: string; onClose: () => void; onDone: () => void }) {
+function ImportSheet(props: { backup: BackupFile; migratedFrom: number | null; dropped: { days: number; prices: number } | null; currentFoodDb: string; onClose: () => void; onDone: () => void }) {
   const store = useStore();
   const [mode, setMode] = useState<'replace' | 'merge'>('merge');
   const [busy, setBusy] = useState(false);
@@ -311,7 +318,7 @@ function ImportSheet(props: { backup: BackupFile; migratedFrom: number | null; c
           disabled={busy}
           onClick={async () => {
             setBusy(true);
-            const incoming = { ingredients: b.ingredients, prices: b.prices, days: b.days, settings: b.settings };
+            const incoming = { ingredients: b.ingredients, texts: b.texts, answers: b.answers, settings: b.settings };
             if (mode === 'replace') await store.replaceAll(incoming, 'バックアップの読み込み(全部置き換え)の前', { demo: false });
             else await store.mergeByDate(incoming, 'バックアップの読み込み(日付ごとにマージ)の前');
             toast('読み込みました');
@@ -324,7 +331,12 @@ function ImportSheet(props: { backup: BackupFile; migratedFrom: number | null; c
     >
       <p class="small">書き出した日時: {b.exportedAt ? fmtDateTime(b.exportedAt) : '不明'}</p>
       <SummaryList s={s} />
-      {props.migratedFrom !== null ? <p class="small">古い形式(schema {props.migratedFrom})から変換しました。</p> : null}
+      {props.migratedFrom !== null ? (
+        <div class="banner warn">
+          古い形式(schema {props.migratedFrom})のファイルです。食材マスタと設定だけを読み込みます
+          {props.dropped ? `(旧形式の日 ${props.dropped.days} 日分・価格 ${props.dropped.prices} 件は読み込みません。旧形式の時期のデータはデモだけでした)` : ''}。
+        </div>
+      ) : null}
       {b.foodDbVersion.id && b.foodDbVersion.id !== props.currentFoodDb ? (
         <div class="banner warn">このファイルは、別の版の成分表({b.foodDbVersion.id})で作られました。いまの版({props.currentFoodDb})で計算し直します。</div>
       ) : null}
@@ -339,7 +351,7 @@ function ImportSheet(props: { backup: BackupFile; migratedFrom: number | null; c
       />
       <p class="small muted">
         {mode === 'merge'
-          ? 'ファイルにある日付は、ファイルの内容で置き換えます。ファイルにない日付は今のまま残します。食材と価格は同じものを上書きし、新しいものを足します。設定は今のままです。'
+          ? 'ファイルにある日(献立・食材費のそれぞれ)は、ファイルのテキストと補足で置き換えます。ファイルにない日は今のまま残します。食材は同じものを上書きし、新しいものを足します。設定は今のままです。'
           : '今のデータをすべて、ファイルの内容に置き換えます。'}
         読み込む前に、今の状態を自動で退避します(直近3世代)。
       </p>
@@ -369,7 +381,7 @@ function ClearSheet(props: { lastBackupAt: string | undefined; onExport: () => P
         </Button>
       }
     >
-      <p>食事・体重・食材・価格をすべて消します(調味料などの初期値は入れ直します。設定は残します)。</p>
+      <p>日ごとのテキスト(献立・食材費)・補足・食材をすべて消します(調味料などの初期値は入れ直します。設定は残します)。</p>
       <p class="small">
         最後のバックアップ: <b>{props.lastBackupAt ? fmtDateTime(props.lastBackupAt) : 'まだありません'}</b>
       </p>
