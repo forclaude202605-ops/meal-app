@@ -18,6 +18,18 @@
   --info-bg: #e6f0fb;
   --info-text: #174a85;
   --shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  /* 分類の色(この順で使う。色覚の型でも隣どうしを見分けられることを確かめた並び) */
+  --c1: #eb6834;
+  --c2: #2a78d6;
+  --c3: #14935f;
+  --c4: #9a7300;
+  --c5: #c13f8a;
+  /* 状態の色(分類の色とは別に取っておく。必ず記号と文字を添える) */
+  --good-bg: #e3f3e8;
+  --good-text: #1d6b3a;
+  --good: #2f8f55;
+  --warn: #a87400;
+  --bad: #c8382a;
   --radius: 12px;
   --tabbar-h: 56px;
   color-scheme: light dark;
@@ -42,6 +54,16 @@
     --info-bg: #13283f;
     --info-text: #a9cdf5;
     --shadow: none;
+    --c1: #f38a5c;
+    --c2: #5d9ff0;
+    --c3: #3fcb95;
+    --c4: #d9b440;
+    --c5: #e77bb8;
+    --good-bg: #123322;
+    --good-text: #8fe0b0;
+    --good: #3fcb95;
+    --warn: #e0b040;
+    --bad: #ff8a78;
   }
 }
 
@@ -742,4 +764,248 @@ table.tbl.nutr tbody th {
 details.card > summary {
   cursor: pointer;
   min-height: 32px;
+}
+
+/* ---- 色: 区分・状態・行の種類 ---- */
+.slot-c-朝 { --slot: var(--c1); }
+.slot-c-昼 { --slot: var(--c2); }
+.slot-c-間食 { --slot: var(--c3); }
+.slot-c-夜 { --slot: var(--c4); }
+.slot-c-サプリ { --slot: var(--c5); }
+.slot-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--slot, var(--text-2));
+  margin-right: 4px;
+  vertical-align: baseline;
+}
+.cost-slot {
+  border-left: 4px solid var(--slot, var(--line));
+  padding-left: 8px;
+}
+.badge.good {
+  background: var(--good-bg);
+  color: var(--good-text);
+}
+.badge.slot {
+  background: color-mix(in srgb, var(--slot) 18%, var(--surface));
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--slot) 55%, var(--surface));
+}
+.badge.muted {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.read-line.t-title .raw {
+  font-weight: 650;
+}
+.problem-group {
+  border-left: 4px solid var(--line);
+  padding-left: 10px;
+}
+.problem-group.g-assign { border-left-color: var(--c2); }
+.problem-group.g-unit { border-left-color: var(--c4); }
+.problem-group.g-qty { border-left-color: var(--c1); }
+.problem-group.g-unread { border-left-color: var(--bad); }
+.problem-group.g-calc { border-left-color: var(--text-2); }
+.big-number {
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- PFC のエネルギー比の帯 ---- */
+.pfc-bar {
+  display: flex;
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  gap: 2px;
+  margin: 6px 0 2px;
+  background: var(--surface);
+}
+.pfc-bar span {
+  display: block;
+  height: 100%;
+}
+.pfc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+.pfc-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+
+/* ---- 食事摂取基準との比較 ---- */
+.dri-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.dri-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dri-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.dri-row .top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+.dri-row .name {
+  flex: 1;
+  min-width: 7em;
+}
+.dri-row .val {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dri-row .sub {
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+.st {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.78rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.st-ok { background: var(--good-bg); color: var(--good-text); }
+.st-low, .st-below-ai, .st-high { background: var(--warn-bg); color: var(--warn-text); }
+.st-deficit, .st-over-ul { background: var(--bad-bg); color: var(--bad-text); }
+.st-info { background: var(--surface-2); color: var(--text-2); }
+.ratio {
+  position: relative;
+  height: 10px;
+  margin: 4px 0 2px;
+  border-radius: 5px;
+  background: var(--surface-2);
+}
+.ratio .fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 5px;
+}
+.ratio .band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--good) 22%, transparent);
+  border-left: 1px solid var(--good);
+  border-right: 1px solid var(--good);
+}
+.ratio .mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--text);
+}
+.ratio .dot {
+  position: absolute;
+  top: -2px;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+}
+.fill-ok, .dot-ok { background: var(--good); }
+.fill-low, .fill-below-ai, .fill-high, .dot-low, .dot-high, .dot-below-ai { background: var(--warn); }
+.fill-deficit, .fill-over-ul, .dot-deficit, .dot-over-ul { background: var(--bad); }
+.fill-info, .dot-info { background: var(--text-2); }
+
+/* ---- グラフ ---- */
+.series-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.series-chips .chip-btn i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+.trend {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: pan-y;
+  outline: none;
+}
+.trend:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.trend text {
+  fill: var(--text-2);
+  font-size: 10px;
+  font-family: inherit;
+}
+.trend .title {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+}
+.trend .grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.trend .ref {
+  stroke: var(--text-2);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.trend .cross {
+  stroke: var(--text);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+.readout {
+  min-height: 3.2em;
+  font-size: 0.88rem;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+}
+.readout .item {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.readout .item i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+.segmented button {
+  white-space: nowrap;
 }

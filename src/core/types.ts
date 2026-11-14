@@ -158,7 +158,10 @@ export const answerId = (t: AnswerTarget): string => `${t.kind}|${t.date}|${t.li
 export interface Profile {
   sex?: 'male' | 'female';
   age?: number;
+  /** 身体活動レベル(2025年版): 1 = 低い、2 = ふつう、3 = 高い */
   activity?: 1 | 2 | 3;
+  /** 月経の有無(女性 18〜64歳の鉄の基準に使う) */
+  menstruation?: boolean;
 }
 
 export interface Settings {
@@ -167,6 +170,8 @@ export interface Settings {
   weekStartsOn: 0 | 1;
   averageMode: 'recordedDays' | 'calendarDays';
   backupReminderDays: number;
+  /** 集計のグラフで、体重の下に並べる項目 */
+  chartSeries?: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {

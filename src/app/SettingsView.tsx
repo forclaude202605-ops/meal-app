@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { todayLocal } from '../core/dates.ts';
 import { DEMO_PREFIX } from '../data/demo.ts';
+import { DRI_SOURCE } from '../data/dri2025.ts';
 import type { Profile, Settings } from '../core/types.ts';
 import { parseBackup, summarize, type BackupFile, type DataSummary } from '../data/backup.ts';
 import type { Snapshot } from '../db/db.ts';
@@ -98,16 +99,28 @@ export function SettingsView(props: { isStandalone: boolean }) {
             }}
           />
         </Field>
-        <Field label="身体活動レベル(既定)">
+        <Field label="身体活動レベル" hint="2025年版の区分。「ふつう」は自立している人、「低い」は自宅にいてほとんど外出しない人に相当(報告書の注)">
           <select class="input" value={String(profile?.activity ?? '')} onChange={(e) => setProfile({ activity: Number(e.currentTarget.value) as Profile['activity'] })}>
             <option value="" disabled>
               選んでください
             </option>
-            <option value="1">Ⅰ(低い)</option>
-            <option value="2">Ⅱ(ふつう)</option>
-            <option value="3">Ⅲ(高い)</option>
+            <option value="1">低い</option>
+            <option value="2">ふつう</option>
+            <option value="3">高い</option>
           </select>
         </Field>
+        {profile?.sex === 'female' && profile.age !== undefined && profile.age >= 18 && profile.age <= 64 ? (
+          <Field label="月経の有無" hint="鉄の基準が違うため。選ぶまで、鉄は比較しません">
+            <select class="input" value={profile.menstruation === undefined ? '' : profile.menstruation ? 'yes' : 'no'} onChange={(e) => setProfile({ menstruation: e.currentTarget.value === 'yes' })}>
+              <option value="" disabled>
+                選んでください
+              </option>
+              <option value="yes">あり</option>
+              <option value="no">なし</option>
+            </select>
+          </Field>
+        ) : null}
+        <p class="small muted">基準は「日本人の食事摂取基準(2025年版)」の成人(18歳以上)の値です。妊娠中・授乳中の付加量は入れていません。</p>
       </section>
 
       <section class="card">
@@ -271,6 +284,13 @@ export function SettingsView(props: { isStandalone: boolean }) {
           <dd>{store.foods.versionInfo.retrieved}</dd>
         </dl>
         <p class="small muted">出典 URL: {store.foods.sourceUrl}</p>
+        <h3 style={{ marginTop: '12px' }}>食事摂取基準</h3>
+        <p class="small">
+          {DRI_SOURCE.publisher}「日本人の食事摂取基準(2025年版)」策定検討会報告書の、成人の値を使っています(報告書の表から写したもの)。掲載: {DRI_SOURCE.pageDate}。取得日: {DRI_SOURCE.retrieved}。
+        </p>
+        <p class="small muted" style={{ wordBreak: 'break-all' }}>
+          出典 URL: {DRI_SOURCE.url}
+        </p>
       </section>
 
       {importing ? (

@@ -13,12 +13,12 @@ import { toast } from './pwa.ts';
 import { newId, useAppState, useStore } from './store.ts';
 import { Badge, Button, QtyInput } from './ui.tsx';
 
-const GROUPS: { types: Problem['type'][]; title: string; hint: string }[] = [
-  { types: ['assign', 'note'], title: '食材の割り当て', hint: '一度選べば、その名前を別名として覚えます。' },
-  { types: ['unit'], title: '単位の重さ', hint: '一度答えれば、食材マスタに覚えます。' },
-  { types: ['slot', 'qty', 'purchase-qty', 'mg'], title: '数量・区分(毎回聞く)', hint: '記入漏れの可能性が高いため、毎回聞きます。答えはその日のその行の補足として残ります。' },
-  { types: ['unread'], title: '読めない行', hint: '読めない行は計算に入っていません。テキストを直すか、伏せた形でコピーして知らせてください。' },
-  { types: ['calc'], title: 'そのほか', hint: '' },
+const GROUPS: { id: string; types: Problem['type'][]; title: string; hint: string }[] = [
+  { id: 'assign', types: ['assign', 'note'], title: '食材の割り当て', hint: '一度選べば、その名前を別名として覚えます。' },
+  { id: 'unit', types: ['unit'], title: '単位の重さ', hint: '一度答えれば、食材マスタに覚えます。' },
+  { id: 'qty', types: ['slot', 'qty', 'purchase-qty', 'mg'], title: '数量・区分(毎回聞く)', hint: '記入漏れの可能性が高いため、毎回聞きます。答えはその日のその行の補足として残ります。' },
+  { id: 'unread', types: ['unread'], title: '読めない行', hint: '読めない行は計算に入っていません。テキストを直すか、伏せた形でコピーして知らせてください。' },
+  { id: 'calc', types: ['calc'], title: 'そのほか', hint: '' },
 ];
 
 /** 食材マスタの候補: 名前・別名が、書いた名前を含むか、書いた名前に含まれる(2文字以上) */
@@ -52,7 +52,7 @@ export function ProblemList(props: { problems: Problem[]; showDates?: boolean })
         const items = list.filter((p) => g.types.includes(p.type));
         if (items.length === 0) return null;
         return (
-          <div class="problem-group">
+          <div class={`problem-group g-${g.id}`}>
             <h3>
               {g.title} <span class="muted small">{items.length} 件</span>
             </h3>

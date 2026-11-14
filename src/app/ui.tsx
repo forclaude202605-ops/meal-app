@@ -115,7 +115,7 @@ export function Segmented<T extends string>(props: { value: T; options: { value:
   );
 }
 
-export function Badge(props: { tone: 'warn' | 'bad' | 'info'; children: ComponentChildren; title?: string }) {
+export function Badge(props: { tone: 'warn' | 'bad' | 'info' | 'good' | 'muted' | 'slot'; children: ComponentChildren; title?: string }) {
   return (
     <span class={`badge ${props.tone}`} title={props.title}>
       {props.children}

@@ -303,7 +303,7 @@ function BlockRow(props: {
         <button type="button" class="list-btn grow" onClick={props.open} disabled={!b.date}>
           <span class="grow">
             <b>{b.date ? fmtDateJa(b.date, true) : '日付が未定'}</b> <Badge tone="info">{KIND_LABEL[b.kind]}</Badge>{' '}
-            <Badge tone={b.status === 'new' ? 'info' : 'warn'}>{STATUS_LABEL[b.status]}</Badge>
+            <Badge tone={b.status === 'new' ? 'good' : b.status === 'changed' ? 'warn' : b.status === 'superset' ? 'info' : 'muted'}>{STATUS_LABEL[b.status]}</Badge>
             <br />
             <span class="small num">{dayNumbers(b, props.journal)}</span>
             {n > 0 ? <Badge tone="bad">問題 {n}</Badge> : null}

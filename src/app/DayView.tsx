@@ -10,6 +10,7 @@ import { matchDateLine } from '../core/parse/split.ts';
 import { energyShare } from '../core/pfc.ts';
 import { NUTRIENT_KEYS, SLOT_NAMES, textId, type NoteKind, type NutrientKey } from '../core/types.ts';
 import { fmtAmount, fmtDateJa, fmtGrams, fmtNutrient, fmtYen } from './format.ts';
+import { DriComparison } from './DriView.tsx';
 import { ProblemList } from './Problems.tsx';
 import { toast } from './pwa.ts';
 import { useAppState, useStore } from './store.ts';
@@ -18,6 +19,21 @@ import { Badge, Button, Segmented, Sheet } from './ui.tsx';
 /** 先に見せる栄養素(残りは「すべて表示」で) */
 const MAIN_KEYS: NutrientKey[] = ['kcal', 'protein', 'fat', 'carb', 'fiber', 'salt', 'ca', 'fe', 'zn', 'vita', 'vitd', 'b1', 'b2', 'vitc', 'fol'];
 const OTHER_KEYS = NUTRIENT_KEYS.filter((k) => !MAIN_KEYS.includes(k));
+
+/** 行の種類ごとのバッジの色 */
+const LINE_TONE: Record<ReadLine['type'], 'info' | 'warn' | 'bad' | 'good' | 'muted' | 'slot'> = {
+  blank: 'muted',
+  slot: 'slot',
+  weight: 'info',
+  sun: 'warn',
+  memo: 'muted',
+  title: 'good',
+  items: 'info',
+  store: 'muted',
+  purchase: 'info',
+  unread: 'bad',
+  skip: 'warn',
+};
 
 const LINE_LABEL: Record<ReadLine['type'], string> = {
   blank: '',
@@ -32,6 +48,15 @@ const LINE_LABEL: Record<ReadLine['type'], string> = {
   unread: '読めない',
   skip: '読み飛ばし',
 };
+
+/** その日以前で最も新しい体重(エネルギーの「体重から」の参考に使う) */
+function latestWeight(journal: Journal, date: string): number | undefined {
+  for (let i = journal.meals.length - 1; i >= 0; i--) {
+    const m = journal.meals[i];
+    if (m && m.date <= date && m.day.weightKg !== undefined) return m.day.weightKg;
+  }
+  return undefined;
+}
 
 function pct(v: number | undefined): string {
   return v === undefined ? '' : `${fmtNutrient('protein', v)}%`;
@@ -59,23 +84,38 @@ export function MealDetail(props: { md: MealDay; journal: Journal }) {
 
       <section class="card" aria-label="日の合計">
         <h3>日の合計</h3>
-        <dl class="kv">
-          <dt>エネルギー</dt>
-          <dd class="num">
-            <b>{fmtNutrient('kcal', t.kcal)}</b> kcal
-          </dd>
-          <dt>たんぱく質</dt>
-          <dd class="num">
-            {fmtNutrient('protein', t.protein)} g <span class="muted">{pct(share?.p)}</span>
-          </dd>
-          <dt>脂質</dt>
-          <dd class="num">
-            {fmtNutrient('fat', t.fat)} g <span class="muted">{pct(share?.f)}</span>
-          </dd>
-          <dt>炭水化物</dt>
-          <dd class="num">
-            {fmtNutrient('carb', t.carb)} g <span class="muted">{pct(share?.c)}</span>
-          </dd>
+        <div class="row-flex wrap" style={{ alignItems: 'baseline' }}>
+          <span class="big-number">{fmtNutrient('kcal', t.kcal)}</span>
+          <span>kcal</span>
+          <span class="grow" />
+          <span class="big-number" style={{ fontSize: '1.3rem' }}>
+            {fmtYen(c.total.cost, 'total')}
+          </span>
+        </div>
+        {share ? (
+          <div aria-label="エネルギー比(PFC)">
+            <div class="pfc-bar" aria-hidden="true">
+              <span style={{ flex: share.p, background: 'var(--c3)' }} />
+              <span style={{ flex: share.f, background: 'var(--c4)' }} />
+              <span style={{ flex: share.c, background: 'var(--c5)' }} />
+            </div>
+            <div class="pfc-legend">
+              <span>
+                <i style={{ background: 'var(--c3)' }} />
+                たんぱく質 {fmtNutrient('protein', t.protein)} g({pct(share.p)})
+              </span>
+              <span>
+                <i style={{ background: 'var(--c4)' }} />
+                脂質 {fmtNutrient('fat', t.fat)} g({pct(share.f)})
+              </span>
+              <span>
+                <i style={{ background: 'var(--c5)' }} />
+                炭水化物 {fmtNutrient('carb', t.carb)} g({pct(share.c)})
+              </span>
+            </div>
+          </div>
+        ) : null}
+        <dl class="kv" style={{ marginTop: '8px' }}>
           <dt>食物繊維</dt>
           <dd class="num">{fmtNutrient('fiber', t.fiber)} g</dd>
           <dt>食塩相当量</dt>
@@ -95,6 +135,8 @@ export function MealDetail(props: { md: MealDay; journal: Journal }) {
         {md.notes.length > 0 ? <p class="small">注意: {md.notes.join(' ・ ')}</p> : null}
       </section>
 
+      <DriComparison totals={t} weightKg={md.day.weightKg ?? latestWeight(journal, md.date)} title="食事摂取基準との比較(この日)" />
+
       <section class="card" aria-label="区分ごとの栄養">
         <h3>区分ごとの栄養</h3>
         <div class="table-scroll">
@@ -103,7 +145,10 @@ export function MealDetail(props: { md: MealDay; journal: Journal }) {
               <tr>
                 <th>栄養素</th>
                 {usedSlots.map((s) => (
-                  <th class="r">{s}</th>
+                  <th class={`r slot-c-${s}`}>
+                    <span class="slot-dot" aria-hidden="true" />
+                    {s}
+                  </th>
                 ))}
                 {hasExtras ? <th class="r">日照</th> : null}
                 <th class="r">合計</th>
@@ -141,7 +186,7 @@ export function MealDetail(props: { md: MealDay; journal: Journal }) {
       <section class="card" aria-label="費用の内訳">
         <h3>費用の内訳</h3>
         {usedSlots.map((s) => (
-          <div class="cost-slot">
+          <div class={`cost-slot slot-c-${s}`}>
             <div class="slot-head">
               <b>{s}</b>
               <span class="num">{fmtYen(c.slots[s].cost, 'total')}</span>
@@ -227,8 +272,8 @@ function ReadLines(props: { lines: ReadLine[]; nameOf: (id: string | undefined) 
           .map((l) => (
             <li class={`read-line t-${l.type}`}>
               <span class="no muted num">{l.no}</span>
-              <span class="kind">
-                <Badge tone={l.type === 'unread' ? 'bad' : l.type === 'skip' ? 'warn' : 'info'}>{LINE_LABEL[l.type]}</Badge>
+              <span class={`kind${l.slot ? ` slot-c-${l.slot}` : ''}`}>
+                <Badge tone={LINE_TONE[l.type]}>{l.type === 'slot' && l.slot ? l.slot : LINE_LABEL[l.type]}</Badge>
               </span>
               <span class="body">
                 <span class="raw">{l.raw.trim()}</span>
