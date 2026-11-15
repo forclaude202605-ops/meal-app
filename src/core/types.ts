@@ -172,6 +172,8 @@ export interface Settings {
   backupReminderDays: number;
   /** 集計のグラフで、体重の下に並べる項目 */
   chartSeries?: string[];
+  /** 集計のグラフで、体重に重ねる項目(右の軸)。null = 重ねない。未設定ならエネルギー */
+  chartOverlay?: 'kcal' | 'protein' | 'fat' | 'carb' | 'fiber' | 'salt' | 'cost' | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

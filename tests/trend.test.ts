@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { zeroVec, type DayCalc } from '../src/core/calc.ts';
 import { driProfile } from '../src/core/dri.ts';
-import { buildTrend, niceTicks, referenceLine } from '../src/core/trend.ts';
+import { aggregateTrend, buildTrend, niceTicks, referenceLine } from '../src/core/trend.ts';
 
 function calc(date: string, kcal: number | null): DayCalc {
   const n = zeroVec();
@@ -54,5 +54,38 @@ describe('グラフの値', () => {
     const flat = niceTicks(62.9, 62.9);
     expect(flat.lo).toBeLessThan(62.9);
     expect(flat.hi).toBeGreaterThan(62.9);
+  });
+});
+
+describe('週ごと・月ごと', () => {
+  const days = [
+    { date: '2024-11-04', calc: calc('2024-11-04', 1500), weightKg: 63.2 },
+    { date: '2024-11-06', calc: calc('2024-11-06', 1700), weightKg: 63.6 },
+    { date: '2024-11-12', calc: calc('2024-11-12', 1600) },
+    { date: '2024-12-02', calc: calc('2024-12-02', 1900), weightKg: 62.7 },
+  ];
+  const daily = buildTrend(days, { start: '2024-11-04', end: '2024-12-08' });
+
+  it('週ごと(月曜始まり): 食事は記録のある日の平均、体重は記録の平均。記録のない週は null', () => {
+    const w = aggregateTrend(daily, 'week', 1);
+    expect(w.map((b) => b.date)).toEqual(['2024-11-04', '2024-11-11', '2024-11-18', '2024-11-25', '2024-12-02']);
+    expect(w[0]).toMatchObject({ end: '2024-11-10', recordedDays: 2, weightCount: 2 });
+    expect(w[0]?.values.kcal).toBeCloseTo((1500 + 1700) / 2, 12);
+    expect(w[0]?.weight).toBeCloseTo((63.2 + 63.6) / 2, 12);
+    expect(w[1]).toMatchObject({ recordedDays: 1, weight: null });
+    expect(w[2]?.values.kcal).toBeNull();
+    expect(w[4]?.weight).toBeCloseTo(62.7, 12);
+  });
+
+  it('日曜始まりでも区切れる', () => {
+    expect(aggregateTrend(daily, 'week', 0)[0]?.date).toBe('2024-11-03');
+  });
+
+  it('月ごと', () => {
+    const m = aggregateTrend(daily, 'month', 1);
+    expect(m.map((b) => b.date)).toEqual(['2024-11-01', '2024-12-01']);
+    expect(m[0]?.values.kcal).toBeCloseTo((1500 + 1700 + 1600) / 3, 12);
+    expect(m[0]?.recordedDays).toBe(3);
+    expect(m[1]?.values.cost).toBe(300);
   });
 });

@@ -1,10 +1,10 @@
-// 集計の画面: 期間(週・月・3か月)の、体重のグラフ(下に選んだ項目を同じ日付で並べる)、平均、食事摂取基準との比較。
+// 集計の画面: 体重と選んだ項目のグラフ(日ごと・週ごと・月ごと。体重に1項目を重ね、ほかは下に並べる)、期間の平均、食事摂取基準との比較。
 // 日の値は、保存したテキストから毎回計算したもの。体重はテキストの「体重〇kg」の行から。
 import { useMemo, useState } from 'preact/hooks';
 import { computePeriod } from '../core/calc.ts';
 import { addDays, monthRange, todayLocal, weekRange, type DateRange } from '../core/dates.ts';
 import { driProfile } from '../core/dri.ts';
-import { buildTrend, DEFAULT_SERIES, referenceLine, SERIES, type SeriesDef } from '../core/trend.ts';
+import { aggregateTrend, buildTrend, DEFAULT_SERIES, referenceLine, SERIES, type Grain, type SeriesDef } from '../core/trend.ts';
 import { weightChange, weightStats } from '../core/weight.ts';
 import { DriComparison } from './DriView.tsx';
 import { fmtDateJa, fmtNutrient, fmtYen } from './format.ts';
@@ -12,11 +12,23 @@ import { useAppState, useStore } from './store.ts';
 import { SERIES_COLOR, TrendChart, TrendTable } from './TrendChart.tsx';
 import { Button, Segmented } from './ui.tsx';
 
-type Span = 'week' | 'month' | 'quarter';
+type Span = 'week' | 'month' | 'quarter' | 'halfyear' | 'year';
 
 function rangeOf(span: Span, date: string, weekStartsOn: 0 | 1): DateRange {
   if (span === 'week') return weekRange(date, weekStartsOn);
+  if (span === 'halfyear') {
+    // 週ごと: 26週
+    const end = weekRange(date, weekStartsOn).end;
+    return { start: addDays(end, -26 * 7 + 1), end, calendarDays: 26 * 7 };
+  }
   const m = monthRange(date);
+  if (span === 'year') {
+    // 月ごと: 12か月
+    let start = m.start;
+    for (let k = 0; k < 11; k++) start = monthRange(addDays(start, -1)).start;
+    const days = Math.round((Date.parse(`${m.end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000) + 1;
+    return { start, end: m.end, calendarDays: days };
+  }
   if (span === 'month') return m;
   const prev = monthRange(addDays(m.start, -1));
   const first = monthRange(addDays(prev.start, -1));
@@ -25,6 +37,8 @@ function rangeOf(span: Span, date: string, weekStartsOn: 0 | 1): DateRange {
 
 function shift(span: Span, date: string, dir: 1 | -1, weekStartsOn: 0 | 1): string {
   if (span === 'week') return addDays(date, 7 * dir);
+  if (span === 'halfyear') return addDays(date, 26 * 7 * dir);
+  if (span === 'year') return addDays(date, 365 * dir);
   const r = rangeOf(span, date, weekStartsOn);
   return dir < 0 ? addDays(r.start, -1) : addDays(r.end, 1);
 }
@@ -35,15 +49,20 @@ export function SummaryView() {
   const journal = store.journal();
   const latest = journal.meals[journal.meals.length - 1]?.date;
   const [date, setDate] = useState(latest ?? todayLocal());
-  const [span, setSpan] = useState<Span>('month');
+  const [grain, setGrain] = useState<Grain>('day');
+  const [daySpan, setDaySpan] = useState<Span>('month');
+  const span: Span = grain === 'week' ? 'halfyear' : grain === 'month' ? 'year' : daySpan;
   const [view, setView] = useState<'chart' | 'table'>('chart');
   const ws = data.settings.weekStartsOn;
   const range = rangeOf(span, date, ws);
   const series = (data.settings.chartSeries ?? DEFAULT_SERIES).filter((id): id is SeriesDef['id'] => SERIES.some((s) => s.id === id));
   const setSeries = (list: SeriesDef['id'][]) => store.setSettings({ ...data.settings, chartSeries: list });
+  const overlay = data.settings.chartOverlay === undefined ? 'kcal' : data.settings.chartOverlay;
+  const setOverlay = (id: SeriesDef['id'] | null) => store.setSettings({ ...data.settings, chartOverlay: id });
 
   const all = useMemo(() => journal.meals.map((m) => ({ date: m.date, calc: m.calc, weightKg: m.day.weightKg })), [journal]);
-  const points = useMemo(() => buildTrend(all, range), [all, range.start, range.end]);
+  const daily = useMemo(() => buildTrend(all, range), [all, range.start, range.end]);
+  const points = useMemo(() => (grain === 'day' ? daily : aggregateTrend(daily, grain, ws)), [daily, grain, ws]);
   const ready = driProfile(data.settings.profile);
   const refs = useMemo(() => Object.fromEntries(SERIES.map((s) => [s.id, referenceLine(s.id, ready)])), [ready.ok, data.settings.profile]);
   const days = journal.meals.filter((m) => m.date >= range.start && m.date <= range.end).map((m) => m.calc);
@@ -54,28 +73,42 @@ export function SummaryView() {
   const ws1 = weightStats(log, range.start, range.end);
   const prevRange = rangeOf(span, shift(span, date, -1, ws), ws);
   const change = weightChange(ws1, weightStats(log, prevRange.start, prevRange.end));
-  const lastWeight = [...points].reverse().find((x) => x.weight !== null)?.weight ?? undefined;
+  const lastWeight = [...daily].reverse().find((x) => x.weight !== null)?.weight ?? undefined;
 
   return (
     <div>
       <div class="topbar" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12px)', paddingBottom: '8px' }}>
         <h1 style={{ fontSize: '1.1rem' }}>集計</h1>
         <Segmented
-          label="期間"
-          value={span}
-          onChange={setSpan}
+          label="まとめ方"
+          value={grain}
+          onChange={setGrain}
           options={[
-            { value: 'week', label: '週' },
-            { value: 'month', label: '月' },
-            { value: 'quarter', label: '3か月' },
+            { value: 'day', label: '日ごと' },
+            { value: 'week', label: '週ごと' },
+            { value: 'month', label: '月ごと' },
           ]}
         />
+        {grain === 'day' ? (
+          <div style={{ marginTop: '6px' }}>
+            <Segmented
+              label="期間"
+              value={daySpan}
+              onChange={setDaySpan}
+              options={[
+                { value: 'week', label: '1週' },
+                { value: 'month', label: '1か月' },
+                { value: 'quarter', label: '3か月' },
+              ]}
+            />
+          </div>
+        ) : null}
         <div class="row-flex">
           <Button kind="ghost" aria-label="前の期間" onClick={() => setDate(shift(span, date, -1, ws))}>
             ‹
           </Button>
           <span class="grow" style={{ textAlign: 'center' }}>
-            {fmtDateJa(range.start, true)} 〜 {fmtDateJa(range.end)}
+            {fmtDateJa(range.start, true)} 〜 {fmtDateJa(range.end, range.end.slice(0, 4) !== range.start.slice(0, 4))}
           </span>
           <Button kind="ghost" aria-label="次の期間" onClick={() => setDate(shift(span, date, 1, ws))}>
             ›
@@ -85,7 +118,7 @@ export function SummaryView() {
 
       <section class="card" aria-label="体重と栄養のグラフ">
         <div class="row-flex">
-          <h2 class="grow">体重と、並べて見る項目</h2>
+          <h2 class="grow">体重のグラフ</h2>
           <Segmented
             label="表示"
             value={view}
@@ -96,8 +129,21 @@ export function SummaryView() {
             ]}
           />
         </div>
+        <div class="small muted">体重に重ねる項目(右の軸)</div>
+        <div class="series-chips" role="radiogroup" aria-label="体重に重ねる項目">
+          <button type="button" role="radio" class={`chip-btn${overlay === null ? ' on' : ''}`} aria-checked={overlay === null} onClick={() => setOverlay(null)}>
+            なし
+          </button>
+          {SERIES.map((s) => (
+            <button type="button" role="radio" class={`chip-btn${overlay === s.id ? ' on' : ''}`} aria-checked={overlay === s.id} onClick={() => setOverlay(s.id)}>
+              <i style={{ background: SERIES_COLOR[s.id] }} />
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <div class="small muted">下に並べる項目</div>
         <div class="series-chips" role="group" aria-label="体重の下に並べる項目">
-          {SERIES.map((s) => {
+          {SERIES.filter((s) => s.id !== overlay).map((s) => {
             const on = series.includes(s.id);
             return (
               <button type="button" class={`chip-btn${on ? ' on' : ''}`} aria-pressed={on} onClick={() => setSeries(on ? series.filter((x) => x !== s.id) : [...series, s.id])}>
@@ -107,9 +153,13 @@ export function SummaryView() {
             );
           })}
         </div>
-        {view === 'chart' ? <TrendChart points={points} series={series} refs={refs} /> : <TrendTable points={points} series={series} />}
+        {view === 'chart' ? (
+          <TrendChart points={points} grain={grain} overlay={overlay} series={series} refs={refs} />
+        ) : (
+          <TrendTable points={points} series={[...(overlay ? [overlay] : []), ...series.filter((x) => x !== overlay)]} grain={grain} />
+        )}
         <p class="small muted">
-          体重は、献立のテキストの「体重〇kg」の行から読みます。線のとぎれは記録のない日です。点線は食事摂取基準(プロフィールを設定したとき)。単位の違う値は同じ軸に重ねず、日付をそろえて並べています。
+          体重は、献立のテキストの「体重〇kg」の行から読みます。体重は左の軸、重ねた項目は右の軸です(点線はその項目の食事摂取基準。プロフィールを設定したとき)。線のとぎれは記録のない日です。週ごと・月ごとは、記録のある日の平均(体重は記録の平均)。
         </p>
       </section>
 

@@ -24,7 +24,7 @@ export const SERIES: readonly SeriesDef[] = [
   { id: 'cost', label: '費用', unit: '円', decimals: 0 },
 ];
 
-export const DEFAULT_SERIES: SeriesDef['id'][] = ['kcal', 'protein'];
+export const DEFAULT_SERIES: SeriesDef['id'][] = ['protein'];
 
 export interface TrendPoint {
   date: string;
@@ -51,6 +51,54 @@ export function buildTrend(days: { date: string; calc: DayCalc; weightKg?: numbe
     for (const s of SERIES) values[s.id] = c && c.hasRecord ? seriesValue(s.id, c) : null;
     return { date, weight: log.get(date) ?? null, weightAvg: movingAverage7(log, date), values };
   });
+}
+
+export type Grain = 'day' | 'week' | 'month';
+
+export interface Bucket extends TrendPoint {
+  /** 区切りの最後の日 */
+  end: string;
+  /** 食事の記録のある日数 */
+  recordedDays: number;
+  /** 体重の記録の回数 */
+  weightCount: number;
+}
+
+/**
+ * 日ごとの値を、週ごと・月ごとにまとめる。食事の値は記録のある日の平均、体重は記録の平均(記録のない日を 0 として混ぜない)。
+ * 体重の線(weightAvg)は、まとめた平均をそのまま使う。
+ */
+export function aggregateTrend(points: TrendPoint[], grain: Exclude<Grain, 'day'>, weekStartsOn: 0 | 1): Bucket[] {
+  const keyOf = (date: string) => {
+    if (grain === 'month') return `${date.slice(0, 7)}-01`;
+    const d = new Date(`${date}T00:00:00Z`);
+    const back = (d.getUTCDay() - weekStartsOn + 7) % 7;
+    d.setUTCDate(d.getUTCDate() - back);
+    return d.toISOString().slice(0, 10);
+  };
+  const out: Bucket[] = [];
+  for (const p of points) {
+    const k = keyOf(p.date);
+    let b = out[out.length - 1];
+    if (!b || b.date !== k) {
+      b = { date: k, end: p.date, recordedDays: 0, weightCount: 0, weight: null, weightAvg: null, values: Object.fromEntries(SERIES.map((s) => [s.id, null])) as TrendPoint['values'] };
+      out.push(b);
+    }
+    b.end = p.date;
+    if (p.weight !== null) {
+      b.weight = ((b.weight ?? 0) * b.weightCount + p.weight) / (b.weightCount + 1);
+      b.weightCount++;
+    }
+    if (p.values.kcal !== null) {
+      for (const s of SERIES) {
+        const v = p.values[s.id] as number;
+        b.values[s.id] = (((b.values[s.id] ?? 0) as number) * b.recordedDays + v) / (b.recordedDays + 1);
+      }
+      b.recordedDays++;
+    }
+  }
+  for (const b of out) b.weightAvg = b.weight;
+  return out;
 }
 
 export interface ReferenceLine {

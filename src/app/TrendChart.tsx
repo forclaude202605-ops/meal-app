@@ -1,7 +1,8 @@
-// 体重と、選んだ項目(エネルギー・たんぱく質など)のグラフ。二重軸は使わず、日付をそろえて縦に並べる(仕様書 §8)。
-// どのグラフをタップ(またはなぞる)しても、その日の値をまとめて上に出す。左右の矢印キーでも動かせる。
+// 体重と、選んだ項目(エネルギー・たんぱく質など)のグラフ。
+// 上の大きいグラフ: 体重(左の軸)と、重ねる項目(右の軸)を1枚に重ねる(持ち主の希望で二重軸を使う)。
+// その下: ほかに選んだ項目を、同じ日付で縦に並べる。どこをタップしても、その点の値をまとめて上に出す。
 import { useMemo, useRef, useState } from 'preact/hooks';
-import { niceTicks, SERIES, type ReferenceLine, type SeriesDef, type TrendPoint } from '../core/trend.ts';
+import { niceTicks, SERIES, type Grain, type ReferenceLine, type SeriesDef, type TrendPoint } from '../core/trend.ts';
 import { formatNumber } from '../core/round.ts';
 import { trimZeros } from './format.ts';
 
@@ -19,26 +20,22 @@ export const SERIES_COLOR: Record<string, string> = {
 
 const W = 360;
 const LEFT = 40;
-const RIGHT = 10;
+const RIGHT_STACK = 10;
+const RIGHT_OVERLAY = 40;
 const PANEL_H = 112;
-const TOP = 20;
-const PLOT_H = PANEL_H - TOP - 10;
+const OVERLAY_H = 190;
+const TOP = 22;
 const AXIS_H = 22;
 
 const num = (v: number, d: number) => trimZeros(formatNumber(v, d));
-const md = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 
-interface Panel {
-  id: string;
-  title: string;
-  unit: string;
-  decimals: number;
-  color: string;
-  values: (number | null)[];
-  /** 体重のときの7日移動平均 */
-  avg?: (number | null)[];
-  ref: ReferenceLine | null;
+export function pointLabel(p: TrendPoint & { end?: string }, grain: Grain): string {
+  const md = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
+  if (grain === 'month') return `${date4(p.date)}/${Number(p.date.slice(5, 7))}`;
+  if (grain === 'week') return `${md(p.date)}〜`;
+  return md(p.date);
 }
+const date4 = (d: string) => d.slice(0, 4);
 
 function pathFor(values: (number | null)[], x: (i: number) => number, y: (v: number) => number): string {
   let d = '';
@@ -54,27 +51,45 @@ function pathFor(values: (number | null)[], x: (i: number) => number, y: (v: num
   return d;
 }
 
-export function TrendChart(props: { points: TrendPoint[]; series: SeriesDef['id'][]; refs: Partial<Record<SeriesDef['id'], ReferenceLine | null>> }) {
+interface Line {
+  id: string;
+  title: string;
+  unit: string;
+  decimals: number;
+  color: string;
+  values: (number | null)[];
+  ref: ReferenceLine | null;
+}
+
+export function TrendChart(props: {
+  points: (TrendPoint & { end?: string; recordedDays?: number })[];
+  grain: Grain;
+  /** 体重に重ねる項目(null なら重ねない) */
+  overlay: SeriesDef['id'] | null;
+  /** 下に並べる項目 */
+  series: SeriesDef['id'][];
+  refs: Partial<Record<SeriesDef['id'], ReferenceLine | null>>;
+}) {
   const pts = props.points;
   const n = pts.length;
   const [sel, setSel] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const daily = props.grain === 'day';
 
-  const panels: Panel[] = useMemo(() => {
-    const list: Panel[] = [
-      { id: 'weight', title: '体重', unit: 'kg', decimals: 1, color: SERIES_COLOR.weight as string, values: pts.map((p) => p.weight), avg: pts.map((p) => p.weightAvg), ref: null },
-    ];
-    for (const s of SERIES) {
-      if (!props.series.includes(s.id)) continue;
-      list.push({ id: s.id, title: s.label, unit: s.unit, decimals: s.decimals, color: SERIES_COLOR[s.id] as string, values: pts.map((p) => p.values[s.id]), ref: props.refs[s.id] ?? null });
-    }
-    return list;
-  }, [pts, props.series, props.refs]);
+  const line = (s: SeriesDef): Line => ({ id: s.id, title: s.label, unit: s.unit, decimals: s.decimals, color: SERIES_COLOR[s.id] as string, values: pts.map((p) => p.values[s.id]), ref: props.refs[s.id] ?? null });
+  const over = useMemo(() => {
+    const s = SERIES.find((x) => x.id === props.overlay);
+    return s ? line(s) : null;
+  }, [pts, props.overlay, props.refs]);
+  const stack = useMemo(() => SERIES.filter((s) => props.series.includes(s.id) && s.id !== props.overlay).map(line), [pts, props.series, props.overlay, props.refs]);
+  const weights = pts.map((p) => p.weight);
+  const weightLine = pts.map((p) => p.weightAvg);
 
-  const plotW = W - LEFT - RIGHT;
+  const right = over ? RIGHT_OVERLAY : RIGHT_STACK;
+  const plotW = W - LEFT - right;
   const x = (i: number) => LEFT + (n <= 1 ? plotW / 2 : (i * plotW) / (n - 1));
-  const H = panels.length * PANEL_H + AXIS_H;
-  const markers = n <= 35;
+  const H = OVERLAY_H + stack.length * PANEL_H + AXIS_H;
+  const markers = n <= 40;
 
   const pickIndex = (clientX: number) => {
     const svg = svgRef.current;
@@ -85,30 +100,47 @@ export function TrendChart(props: { points: TrendPoint[]; series: SeriesDef['id'
     setSel(Math.max(0, Math.min(n - 1, i)));
   };
 
+  const scale = (vals: (number | null)[], ref: ReferenceLine | null, y0: number, h: number) => {
+    const v = vals.filter((a): a is number => a !== null);
+    if (ref) v.push(ref.value);
+    const t = v.length > 0 ? niceTicks(Math.min(...v), Math.max(...v), 3) : { lo: 0, hi: 1, ticks: [0, 1] };
+    const y = (a: number) => y0 + TOP + (h - TOP - 10) - ((a - t.lo) / (t.hi - t.lo || 1)) * (h - TOP - 10);
+    return { ...t, y };
+  };
+
   const s = sel !== null ? pts[sel] : undefined;
-  // x 軸の日付: 最初・最後と、その間を最大 5 か所
   const step = Math.max(1, Math.ceil(n / 6));
   const xTicks = pts.map((p, i) => ({ p, i })).filter(({ i }) => i % step === 0 || i === n - 1);
+
+  // 上の重ねたグラフ
+  const wS = scale([...weights, ...weightLine], null, 0, OVERLAY_H);
+  const oS = over ? scale(over.values, over.ref, 0, OVERLAY_H) : null;
+  const avgLabel = daily ? '7日移動平均' : props.grain === 'week' ? '週の平均' : '月の平均';
 
   return (
     <div>
       <div class="readout" aria-live="polite">
         {s ? (
           <>
-            <b>{md(s.date)}</b>{' '}
-            {panels.map((p) => {
-              const v = p.values[sel as number];
+            <b>{pointLabel(s, props.grain)}</b>
+            {!daily ? <span class="muted small">(記録 {s.recordedDays ?? 0} 日の平均)</span> : null}{' '}
+            <span class="item">
+              <i style={{ background: SERIES_COLOR.weight }} />
+              体重 {s.weight !== null ? `${num(s.weight, daily ? 1 : 2)}kg` : '—'}
+              {daily && s.weightAvg !== null ? `(7日平均 ${num(s.weightAvg, 2)}kg)` : ''}
+            </span>
+            {[...(over ? [over] : []), ...stack].map((l) => {
+              const v = l.values[sel as number];
               return (
                 <span class="item">
-                  <i style={{ background: p.color }} />
-                  {p.title} {v !== null && v !== undefined ? `${num(v, p.decimals)}${p.unit}` : '—'}
-                  {p.avg && p.avg[sel as number] !== null ? `(7日平均 ${num(p.avg[sel as number] as number, 2)}kg)` : ''}
+                  <i style={{ background: l.color }} />
+                  {l.title} {v !== null && v !== undefined ? `${num(v, l.decimals)}${l.unit}` : '—'}
                 </span>
               );
             })}
           </>
         ) : (
-          <span class="muted">グラフをタップすると、その日の値をまとめて出します。</span>
+          <span class="muted">グラフをタップすると、その{daily ? '日' : props.grain === 'week' ? '週' : '月'}の値をまとめて出します。</span>
         )}
       </div>
       <svg
@@ -116,7 +148,7 @@ export function TrendChart(props: { points: TrendPoint[]; series: SeriesDef['id'
         class="trend"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`体重${panels.length > 1 ? `と${panels.slice(1).map((p) => p.title).join('・')}` : ''}のグラフ(${n}日分)。表でも見られます`}
+        aria-label={`体重${over ? `と${over.title}を重ねた` : ''}グラフ${stack.length ? `と、${stack.map((l) => l.title).join('・')}のグラフ` : ''}(${n}点)。表でも見られます`}
         tabIndex={0}
         onPointerDown={(e) => pickIndex(e.clientX)}
         onPointerMove={(e) => (e.buttons > 0 || e.pointerType === 'mouse') && pickIndex(e.clientX)}
@@ -125,61 +157,100 @@ export function TrendChart(props: { points: TrendPoint[]; series: SeriesDef['id'
           if (e.key === 'ArrowRight') setSel((v) => Math.min(n - 1, (v ?? -1) + 1));
         }}
       >
-        {panels.map((p, k) => {
-          const y0 = k * PANEL_H;
-          const vals = [...p.values, ...(p.avg ?? [])].filter((v): v is number => v !== null);
-          if (p.ref) vals.push(p.ref.value);
-          const { lo, hi, ticks } = vals.length > 0 ? niceTicks(Math.min(...vals), Math.max(...vals), 3) : { lo: 0, hi: 1, ticks: [0, 1] };
-          const y = (v: number) => y0 + TOP + PLOT_H - ((v - lo) / (hi - lo || 1)) * PLOT_H;
-          const empty = p.values.every((v) => v === null);
+        {/* 凡例 */}
+        <g>
+          <circle cx={LEFT + 4} cy={9} r={4} fill={SERIES_COLOR.weight} stroke="var(--surface)" stroke-width={2} />
+          <text x={LEFT + 11} y={12}>
+            体重(左 kg)
+          </text>
+          <line x1={LEFT + 82} x2={LEFT + 96} y1={9} y2={9} stroke={SERIES_COLOR.weight} stroke-width={2} opacity={0.6} />
+          <text x={LEFT + 99} y={12}>
+            {avgLabel}
+          </text>
+          {over ? (
+            <>
+              <line x1={LEFT + 170} x2={LEFT + 184} y1={9} y2={9} stroke={over.color} stroke-width={2.5} />
+              <text x={LEFT + 187} y={12}>
+                {over.title}(右 {over.unit})
+              </text>
+            </>
+          ) : null}
+        </g>
+        {wS.ticks.map((t) => (
+          <g>
+            <line class="grid" x1={LEFT} x2={W - right} y1={wS.y(t)} y2={wS.y(t)} />
+            <text x={LEFT - 4} y={wS.y(t) + 3} text-anchor="end" style={{ fill: 'var(--c2)' }}>
+              {num(t, wS.hi - wS.lo < 10 ? 1 : 0)}
+            </text>
+          </g>
+        ))}
+        {oS && over
+          ? oS.ticks.map((t) => (
+              <text x={W - right + 4} y={oS.y(t) + 3} text-anchor="start" style={{ fill: over.color }}>
+                {num(t, over.decimals > 0 && oS.hi - oS.lo < 10 ? 1 : 0)}
+              </text>
+            ))
+          : null}
+        {oS && over?.ref ? (
+          <g>
+            <line class="ref" x1={LEFT} x2={W - right} y1={oS.y(over.ref.value)} y2={oS.y(over.ref.value)} style={{ stroke: over.color }} />
+            <text x={W - right - 2} y={oS.y(over.ref.value) - 3} text-anchor="end">
+              {over.ref.label} {num(over.ref.value, over.decimals)}
+            </text>
+          </g>
+        ) : null}
+        {oS && over ? (
+          <>
+            <path d={pathFor(over.values, x, oS.y)} fill="none" stroke={over.color} stroke-width={2.5} stroke-linejoin="round" stroke-linecap="round" />
+            {over.values.map((v, i) => (v !== null && (markers || i === sel) ? <rect x={x(i) - 3.5} y={oS.y(v) - 3.5} width={7} height={7} fill={over.color} stroke="var(--surface)" stroke-width={1.5} /> : null))}
+          </>
+        ) : null}
+        <path d={pathFor(weightLine, x, wS.y)} fill="none" stroke={SERIES_COLOR.weight} stroke-width={2} stroke-linejoin="round" stroke-linecap="round" opacity={daily ? 0.6 : 1} />
+        {weights.map((v, i) => (v !== null ? <circle cx={x(i)} cy={wS.y(v)} r={i === sel ? 5 : 4} fill={SERIES_COLOR.weight} stroke="var(--surface)" stroke-width={2} /> : null))}
+        {weights.every((v) => v === null) ? (
+          <text x={LEFT + plotW / 2} y={OVERLAY_H / 2} text-anchor="middle">
+            この期間に体重の記録がありません
+          </text>
+        ) : null}
+
+        {/* 下に並べる項目 */}
+        {stack.map((l, k) => {
+          const y0 = OVERLAY_H + k * PANEL_H;
+          const sc = scale(l.values, l.ref, y0, PANEL_H);
           return (
             <g>
-              <text class="title" x={LEFT} y={y0 + 12}>
-                {p.title}({p.unit})
+              <text class="title" x={LEFT} y={y0 + 14}>
+                {l.title}({l.unit})
               </text>
-              {p.avg ? (
+              {sc.ticks.map((t) => (
                 <g>
-                  <circle cx={W - 150} cy={y0 + 9} r={4} fill={p.color} stroke="var(--surface)" stroke-width={2} />
-                  <text x={W - 143} y={y0 + 12}>
-                    記録
-                  </text>
-                  <line x1={W - 108} x2={W - 92} y1={y0 + 9} y2={y0 + 9} stroke={p.color} stroke-width={2} />
-                  <text x={W - 88} y={y0 + 12}>
-                    7日移動平均
-                  </text>
-                </g>
-              ) : null}
-              {ticks.map((t) => (
-                <g>
-                  <line class="grid" x1={LEFT} x2={W - RIGHT} y1={y(t)} y2={y(t)} />
-                  <text x={LEFT - 4} y={y(t) + 3} text-anchor="end">
-                    {num(t, p.decimals > 0 && hi - lo < 10 ? 1 : 0)}
+                  <line class="grid" x1={LEFT} x2={W - right} y1={sc.y(t)} y2={sc.y(t)} />
+                  <text x={LEFT - 4} y={sc.y(t) + 3} text-anchor="end">
+                    {num(t, l.decimals > 0 && sc.hi - sc.lo < 10 ? 1 : 0)}
                   </text>
                 </g>
               ))}
-              {p.ref ? (
+              {l.ref ? (
                 <g>
-                  <line class="ref" x1={LEFT} x2={W - RIGHT} y1={y(p.ref.value)} y2={y(p.ref.value)} />
-                  <text x={W - RIGHT} y={y(p.ref.value) - 3} text-anchor="end">
-                    {p.ref.label} {num(p.ref.value, p.decimals)}
+                  <line class="ref" x1={LEFT} x2={W - right} y1={sc.y(l.ref.value)} y2={sc.y(l.ref.value)} />
+                  <text x={W - right} y={sc.y(l.ref.value) - 3} text-anchor="end">
+                    {l.ref.label} {num(l.ref.value, l.decimals)}
                   </text>
                 </g>
               ) : null}
-              {empty ? (
-                <text x={LEFT + plotW / 2} y={y0 + TOP + PLOT_H / 2} text-anchor="middle">
-                  {p.id === 'weight' ? 'この期間に体重の記録がありません' : 'この期間に記録がありません'}
+              {l.values.every((v) => v === null) ? (
+                <text x={LEFT + plotW / 2} y={y0 + PANEL_H / 2 + 6} text-anchor="middle">
+                  この期間に記録がありません
                 </text>
               ) : null}
-              {p.avg ? <path d={pathFor(p.avg, x, y)} fill="none" stroke={p.color} stroke-width={2} stroke-linejoin="round" stroke-linecap="round" opacity={0.55} /> : <path d={pathFor(p.values, x, y)} fill="none" stroke={p.color} stroke-width={2} stroke-linejoin="round" stroke-linecap="round" />}
-              {p.values.map((v, i) =>
-                v !== null && (markers || p.avg || i === sel) ? <circle cx={x(i)} cy={y(v)} r={i === sel ? 5 : 4} fill={p.color} stroke="var(--surface)" stroke-width={2} /> : null,
-              )}
+              <path d={pathFor(l.values, x, sc.y)} fill="none" stroke={l.color} stroke-width={2} stroke-linejoin="round" stroke-linecap="round" />
+              {l.values.map((v, i) => (v !== null && (markers || i === sel) ? <circle cx={x(i)} cy={sc.y(v)} r={i === sel ? 5 : 4} fill={l.color} stroke="var(--surface)" stroke-width={2} /> : null))}
             </g>
           );
         })}
         {xTicks.map(({ p, i }) => (
           <text x={x(i)} y={H - 6} text-anchor="middle">
-            {md(p.date)}
+            {pointLabel(p, props.grain)}
           </text>
         ))}
         {sel !== null ? <line class="cross" x1={x(sel)} x2={x(sel)} y1={TOP - 6} y2={H - AXIS_H} /> : null}
@@ -189,16 +260,17 @@ export function TrendChart(props: { points: TrendPoint[]; series: SeriesDef['id'
 }
 
 /** 同じ内容の表(グラフと切り替える) */
-export function TrendTable(props: { points: TrendPoint[]; series: SeriesDef['id'][] }) {
+export function TrendTable(props: { points: (TrendPoint & { recordedDays?: number })[]; series: SeriesDef['id'][]; grain: Grain }) {
   const cols = SERIES.filter((s) => props.series.includes(s.id));
+  const daily = props.grain === 'day';
   return (
     <div class="table-scroll">
       <table class="tbl nutr">
         <thead>
           <tr>
-            <th>日</th>
+            <th>{daily ? '日' : props.grain === 'week' ? '週' : '月'}</th>
             <th class="r">体重</th>
-            <th class="r">7日平均</th>
+            {daily ? <th class="r">7日平均</th> : <th class="r">記録</th>}
             {cols.map((c) => (
               <th class="r">
                 {c.label}
@@ -210,9 +282,9 @@ export function TrendTable(props: { points: TrendPoint[]; series: SeriesDef['id'
         <tbody>
           {props.points.map((p) => (
             <tr>
-              <td>{md(p.date)}</td>
-              <td class="r num">{p.weight !== null ? num(p.weight, 1) : ''}</td>
-              <td class="r num">{p.weightAvg !== null ? num(p.weightAvg, 2) : ''}</td>
+              <td>{pointLabel(p, props.grain)}</td>
+              <td class="r num">{p.weight !== null ? num(p.weight, daily ? 1 : 2) : ''}</td>
+              {daily ? <td class="r num">{p.weightAvg !== null ? num(p.weightAvg, 2) : ''}</td> : <td class="r num">{p.recordedDays ?? 0}日</td>}
               {cols.map((c) => (
                 <td class="r num">{p.values[c.id] !== null ? num(p.values[c.id] as number, c.decimals) : '—'}</td>
               ))}
@@ -220,6 +292,7 @@ export function TrendTable(props: { points: TrendPoint[]; series: SeriesDef['id'
           ))}
         </tbody>
       </table>
+      {!daily ? <p class="small muted">週・月の値は、記録のある日の平均(体重は記録の平均)。</p> : null}
     </div>
   );
 }
